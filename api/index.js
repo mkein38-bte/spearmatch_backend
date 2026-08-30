@@ -5,6 +5,16 @@ const client = new OpenAI({
 });
 
 export default async function handler(req, res) {
+  // CORS
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  // Preflight request
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({
       error: "Method not allowed",
@@ -30,15 +40,15 @@ Ta mission est de transformer une demande libre concernant une arbalète de chas
 
 RÈGLES FONDAMENTALES :
 
-1. Toute demande explicitement stricte doit être considérée comme une contrainte.
-2. Le budget maximum est toujours éliminatoire lorsqu'il est indiqué.
+1. Toute demande explicitement stricte est une contrainte.
+2. Le budget maximum est éliminatoire lorsqu'il est indiqué.
 3. Une configuration explicitement demandée de manière stricte est éliminatoire.
-4. Une préférence souple ne doit pas éliminer un produit : elle influence son score.
-5. Une information absente de la demande doit rester absente.
-6. Ne jamais inventer une préférence que le client n'a pas exprimée.
-7. L'IA doit comprendre le langage naturel, les synonymes et les formulations approximatives.
-8. L'importance des critères doit être déterminée à partir de la façon dont le client formule sa demande.
-9. Le résultat doit permettre ensuite à un moteur de comparer les critères avec les 50 arbalètes du CMS.
+4. Une préférence souple ne doit jamais éliminer un produit.
+5. Une information absente de la demande reste absente.
+6. Ne jamais inventer une préférence.
+7. Comprendre le langage naturel, les synonymes et les formulations approximatives.
+8. Déterminer l'importance des critères à partir de la formulation du client.
+9. Le résultat sera utilisé pour comparer la demande avec les produits du CMS SpearMatch.
 `,
 
       input: query,
@@ -54,12 +64,8 @@ RÈGLES FONDAMENTALES :
               budget: {
                 type: "object",
                 properties: {
-                  maximum: {
-                    type: ["number", "null"]
-                  },
-                  strict: {
-                    type: "boolean"
-                  }
+                  maximum: { type: ["number", "null"] },
+                  strict: { type: "boolean" }
                 },
                 required: ["maximum", "strict"],
                 additionalProperties: false
@@ -68,15 +74,9 @@ RÈGLES FONDAMENTALES :
               configuration: {
                 type: "object",
                 properties: {
-                  value: {
-                    type: ["string", "null"]
-                  },
-                  strict: {
-                    type: "boolean"
-                  },
-                  importance: {
-                    type: "number"
-                  }
+                  value: { type: ["string", "null"] },
+                  strict: { type: "boolean" },
+                  importance: { type: "number" }
                 },
                 required: ["value", "strict", "importance"],
                 additionalProperties: false
@@ -85,21 +85,11 @@ RÈGLES FONDAMENTALES :
               longueur: {
                 type: "object",
                 properties: {
-                  minimum: {
-                    type: ["number", "null"]
-                  },
-                  maximum: {
-                    type: ["number", "null"]
-                  },
-                  cible: {
-                    type: ["number", "null"]
-                  },
-                  strict: {
-                    type: "boolean"
-                  },
-                  importance: {
-                    type: "number"
-                  }
+                  minimum: { type: ["number", "null"] },
+                  maximum: { type: ["number", "null"] },
+                  cible: { type: ["number", "null"] },
+                  strict: { type: "boolean" },
+                  importance: { type: "number" }
                 },
                 required: [
                   "minimum",
@@ -114,12 +104,8 @@ RÈGLES FONDAMENTALES :
               puissance: {
                 type: "object",
                 properties: {
-                  importance: {
-                    type: "number"
-                  },
-                  niveau: {
-                    type: ["string", "null"]
-                  }
+                  importance: { type: "number" },
+                  niveau: { type: ["string", "null"] }
                 },
                 required: ["importance", "niveau"],
                 additionalProperties: false
@@ -128,12 +114,8 @@ RÈGLES FONDAMENTALES :
               precision: {
                 type: "object",
                 properties: {
-                  importance: {
-                    type: "number"
-                  },
-                  niveau: {
-                    type: ["string", "null"]
-                  }
+                  importance: { type: "number" },
+                  niveau: { type: ["string", "null"] }
                 },
                 required: ["importance", "niveau"],
                 additionalProperties: false
@@ -142,12 +124,8 @@ RÈGLES FONDAMENTALES :
               maniabilite: {
                 type: "object",
                 properties: {
-                  importance: {
-                    type: "number"
-                  },
-                  niveau: {
-                    type: ["string", "null"]
-                  }
+                  importance: { type: "number" },
+                  niveau: { type: ["string", "null"] }
                 },
                 required: ["importance", "niveau"],
                 additionalProperties: false
@@ -156,12 +134,8 @@ RÈGLES FONDAMENTALES :
               niveau: {
                 type: "object",
                 properties: {
-                  value: {
-                    type: ["string", "null"]
-                  },
-                  importance: {
-                    type: "number"
-                  }
+                  value: { type: ["string", "null"] },
+                  importance: { type: "number" }
                 },
                 required: ["value", "importance"],
                 additionalProperties: false
@@ -174,6 +148,7 @@ RÈGLES FONDAMENTALES :
                 }
               }
             },
+
             required: [
               "budget",
               "configuration",
@@ -184,15 +159,16 @@ RÈGLES FONDAMENTALES :
               "niveau",
               "autres_preferences"
             ],
+
             additionalProperties: false
           }
         }
       }
     });
 
-    const result = JSON.parse(response.output_text);
-
-    return res.status(200).json(result);
+    return res.status(200).json(
+      JSON.parse(response.output_text)
+    );
 
   } catch (error) {
     console.error(error);
