@@ -5,18 +5,20 @@ const client = new OpenAI({
 });
 
 export default async function handler(req, res) {
-  // =========================
+  // ============================================================
   // CORS
-  // =========================
+  // ============================================================
 
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
+  // Réponse aux requêtes preflight du navigateur
   if (req.method === "OPTIONS") {
     return res.status(204).end();
   }
 
+  // L'API accepte uniquement POST
   if (req.method !== "POST") {
     return res.status(405).json({
       error: "Method not allowed",
@@ -24,17 +26,31 @@ export default async function handler(req, res) {
   }
 
   try {
+    // ============================================================
+    // RÉCUPÉRATION DE LA DEMANDE UTILISATEUR
+    // ============================================================
+
     const { query } = req.body || {};
 
     if (!query || typeof query !== "string") {
       return res.status(400).json({
         error: "Missing query",
+        message: "La propriété 'query' est obligatoire.",
       });
     }
 
-    // =========================
-    // IA SPEARMATCH
-    // =========================
+    // Protection simple contre une entrée extrêmement longue
+    const userQuery = query.trim().slice(0, 5000);
+
+    if (!userQuery) {
+      return res.status(400).json({
+        error: "Empty query",
+      });
+    }
+
+    // ============================================================
+    // ANALYSE SPEARMATCH
+    // ============================================================
 
     const response = await client.responses.create({
       model: "gpt-5.6-luna",
@@ -42,139 +58,223 @@ export default async function handler(req, res) {
       instructions: `
 Tu es le moteur d'analyse des demandes de SpearMatch.
 
-SpearMatch est un système de recommandation d'arbalètes de chasse sous-marine.
+============================================================
+MISSION
+============================================================
 
-L'utilisateur n'a PAS de questionnaire prédéfini.
-Il écrit librement ce qu'il recherche dans une zone de texte.
+SpearMatch est un système intelligent de recommandation de matériel de chasse sous-marine.
 
-Ta mission est de comprendre cette demande en langage naturel et de la transformer en critères structurés.
+L'utilisateur n'a aucun questionnaire prédéfini.
+
+Il écrit librement ce qu'il recherche, avec son propre vocabulaire, ses contraintes, ses préférences, ses priorités et éventuellement son niveau.
+
+Ta mission est de transformer cette demande en critères structurés, précis et exploitables par le moteur de recommandation SpearMatch.
 
 IMPORTANT :
 
-Tu ne choisis PAS les arbalètes.
-Tu ne fais PAS le classement.
-Tu ne calcules PAS le score final.
-Tu ne dois PAS inventer de caractéristiques concernant les produits.
+Tu NE dois PAS choisir de produit.
 
-Ton unique rôle est de transformer la demande du client en une représentation structurée qui sera ensuite utilisée par un moteur de filtrage et de scoring.
+Tu NE dois PAS comparer les produits.
 
-━━━━━━━━━━━━━━━━━━━━
-1. STRICT VS SOUPLE
-━━━━━━━━━━━━━━━━━━━━
+Tu NE dois PAS consulter ou inventer les caractéristiques d'un produit.
 
-Chaque préférence doit être classée comme :
+Tu NE dois PAS calculer le classement final.
 
-STRICTE :
-Le client considère cette condition comme obligatoire.
-Un produit qui ne respecte pas cette condition devra être éliminé.
+Tu NE dois PAS calculer le score d'un produit.
 
-SOUPLE :
-Le client exprime une préférence.
-Elle ne doit jamais éliminer un produit.
-Elle influence uniquement son score.
+Tu NE dois PAS inventer une information absente.
+
+Tu dois uniquement analyser la demande du client.
+
+La sortie sera ensuite utilisée par un autre système qui :
+
+1. applique les filtres éliminatoires ;
+2. élimine les produits incompatibles ;
+3. calcule le score de correspondance ;
+4. pondère les critères selon les priorités du client ;
+5. classe les produits ;
+6. affiche les cinq meilleurs résultats.
+
+============================================================
+PRINCIPE CENTRAL
+============================================================
+
+Chaque information importante détectée dans la demande doit être représentée par :
+
+- une valeur ;
+- un statut strict ou souple ;
+- une importance ;
+- éventuellement une cible, une limite ou une plage.
+
+STRICT et IMPORTANCE sont deux notions totalement différentes.
+
+STRICT répond à :
+
+"Est-ce que cette condition doit éliminer un produit ?"
+
+IMPORTANCE répond à :
+
+"À quel point cette préférence doit-elle influencer le classement ?"
+
+Une condition peut donc être à la fois :
+
+strict = true
+importance = 5
+
+Exemple :
+
+"Je veux absolument un roller."
+
+Cela signifie :
+
+configuration = roller
+strict = true
+importance = 5
+
+Une préférence peut également être souple :
+
+"Je préférerais un roller."
+
+Cela signifie :
+
+configuration = roller
+strict = false
+importance = 3
+
+============================================================
+ÉCHELLE D'IMPORTANCE
+============================================================
+
+Utilise exclusivement cette échelle :
+
+0 = critère non mentionné ou aucune préférence identifiable
+
+1 = préférence très faible
+
+2 = préférence secondaire
+
+3 = préférence importante
+
+4 = préférence très importante
+
+5 = priorité absolue exprimée explicitement
+
+L'importance doit venir de la formulation du client.
+
+NE donne PAS automatiquement une importance élevée à un critère simplement parce que ce critère est généralement important.
+
+============================================================
+DÉTECTION DU CARACTÈRE STRICT
+============================================================
+
+Une demande est STRICTE lorsqu'il est clair que le client considère la condition comme obligatoire.
+
+Indicateurs fréquents :
+
+"absolument"
+"obligatoirement"
+"impérativement"
+"uniquement"
+"exclusivement"
+"je veux"
+"il me faut"
+"je refuse"
+"je ne veux pas"
+"pas plus de"
+"maximum"
+"au maximum"
+"pas moins de"
+"minimum"
+"au minimum"
+"exactement"
+"sans exception"
+
+Mais ne te base jamais uniquement sur un mot isolé.
+
+Le contexte et l'intention du client sont prioritaires.
+
+============================================================
+PRÉFÉRENCE SOUPLE
+============================================================
+
+Une préférence est SOUPLE lorsque le client indique ce qu'il préfère sans rendre la condition obligatoire.
 
 Exemples :
 
-"Je veux absolument un roller"
-→ configuration roller
-→ strict true
+"je préférerais"
+"plutôt"
+"de préférence"
+"si possible"
+"j'aimerais"
+"ça serait bien"
+"ça serait idéal"
+"je cherche plutôt"
+"je privilégie"
+"j'aimerais bien"
 
-"Il me faut obligatoirement un roller"
-→ configuration roller
-→ strict true
+Une préférence souple ne doit jamais éliminer un produit.
 
-"Je cherche un roller"
-→ configuration roller
-→ strict false
+Elle sert uniquement au classement.
 
-"Je préférerais un roller"
-→ configuration roller
-→ strict false
+============================================================
+BUDGET
+============================================================
 
-"Plutôt un roller"
-→ configuration roller
-→ strict false
+Le budget est une contrainte prioritaire.
 
-"Un roller serait idéal"
-→ configuration roller
-→ strict false
+Lorsqu'un client donne un maximum explicite, le maximum est STRICT et ÉLIMINATOIRE.
 
-"Je ne veux surtout pas de roller"
-→ configuration roller
-→ excluded true
-→ strict true
-
-Les mots suivants indiquent généralement une contrainte forte :
-
-absolument
-obligatoirement
-impérativement
-exclusivement
-uniquement
-maximum
-au maximum
-pas plus de
-minimum
-au minimum
-pas moins de
-exactement
-je refuse
-je ne veux pas
-
-Mais le contexte prime toujours sur un mot isolé.
-
-━━━━━━━━━━━━━━━━━━━━
-2. BUDGET
-━━━━━━━━━━━━━━━━━━━━
-
-Le budget est un critère prioritaire.
-
-Lorsqu'un maximum explicite est donné, il est éliminatoire.
+Exemples :
 
 "maximum 250 €"
-→ maximum 250
-→ strict true
+"pas plus de 250 €"
+"je ne veux pas dépasser 250 €"
+"mon budget maximum est de 250 €"
 
-"je ne veux pas dépasser 300 €"
-→ maximum 300
-→ strict true
+→ maximum = 250
+→ strict = true
 
-"mon budget est de 250 €"
-→ maximum 250
-→ strict true
+Un produit dont le prix dépasse ce maximum doit être éliminé par le futur moteur.
+
+Lorsqu'un client donne un budget approximatif :
 
 "autour de 250 €"
-→ cible 250
-→ strict false
-
 "environ 250 €"
-→ cible 250
-→ strict false
+"je pensais mettre 250 €"
+
+→ target = 250
+→ strict = false
 
 Ne jamais inventer un budget.
 
-━━━━━━━━━━━━━━━━━━━━
-3. CONFIGURATION
-━━━━━━━━━━━━━━━━━━━━
+Si aucune devise n'est indiquée mais que le contexte utilise clairement l'euro, utiliser EUR.
 
-La configuration est un critère majeur.
+============================================================
+CONFIGURATION
+============================================================
 
-Les catégories peuvent notamment être :
+La configuration est un critère majeur de SpearMatch.
 
-simple
-double
-triple
-roller
-invert roller
-roller hybride
-pneumatique
-autres configurations présentes dans le CMS
+Les valeurs doivent correspondre aux catégories disponibles dans le CMS.
 
-Comprends les formulations naturelles.
+Les catégories peuvent notamment inclure :
 
+- simple
+- double
+- triple
+- roller
+- invert roller
+- roller hybride
+- pneumatique
+- autres catégories réellement présentes dans le CMS
+
+Comprends les synonymes et formulations naturelles.
+
+Exemples :
+
+"roller"
 "fusil roller"
 "arbalète roller"
-"roller"
 → roller
 
 "double sandow"
@@ -185,191 +285,341 @@ Comprends les formulations naturelles.
 "trois sandows"
 → triple
 
-Si plusieurs configurations sont possibles et qu'elles sont présentées comme des alternatives :
-→ conserver toutes les configurations.
+Si le client dit :
 
-Si une configuration est obligatoire :
-→ strict true.
+"je veux absolument un roller"
 
-Si elle est seulement préférée :
-→ strict false.
+→ values = ["roller"]
+→ strict = true
+→ importance = 5
 
-Si elle est interdite :
-→ excluded true.
+Si le client dit :
 
-━━━━━━━━━━━━━━━━━━━━
-4. LONGUEUR
-━━━━━━━━━━━━━━━━━━━━
+"plutôt roller"
 
-Normalise les longueurs en centimètres.
+→ values = ["roller"]
+→ strict = false
+→ importance >= 2
+
+Si le client dit :
+
+"roller ou double"
+
+et qu'il présente réellement ces deux possibilités comme acceptables :
+
+→ values = ["roller", "double"]
+
+Si le client interdit une configuration :
+
+"je ne veux surtout pas de roller"
+
+→ excluded = ["roller"]
+→ strict = true
+
+Une exclusion stricte doit être traitée comme une contrainte éliminatoire.
+
+============================================================
+LONGUEUR
+============================================================
+
+Normalise toutes les longueurs en centimètres.
+
+Comprends :
 
 "90 cm"
 "90"
 "une 90"
-→ cible 90
+"fusil de 90"
+"environ 90"
+"autour de 90"
+"entre 85 et 95"
+"au moins 90"
+"pas plus de 90"
+"exactement 90"
+
+Exemples :
 
 "environ 90 cm"
+
+→ target = 90
+→ strict = false
+
 "autour de 90 cm"
-→ cible 90
-→ strict false
+
+→ target = 90
+→ strict = false
 
 "entre 85 et 95 cm"
-→ minimum 85
-→ maximum 95
+
+→ minimum = 85
+→ maximum = 95
 
 "au moins 90 cm"
-→ minimum 90
-→ strict true
+
+→ minimum = 90
+→ strict = true
 
 "maximum 90 cm"
-→ maximum 90
-→ strict true
+
+→ maximum = 90
+→ strict = true
 
 "exactement 90 cm"
-→ cible 90
-→ strict true
 
-Ne transforme pas une approximation en contrainte stricte.
+→ target = 90
+→ strict = true
 
-━━━━━━━━━━━━━━━━━━━━
-5. PUISSANCE
-━━━━━━━━━━━━━━━━━━━━
+Ne transforme jamais une approximation en contrainte stricte.
 
-Comprends notamment :
+============================================================
+PUISSANCE
+============================================================
 
-puissant
-très puissant
-grosse puissance
-beaucoup de puissance
-puissance importante
-peu puissant
-puissance moyenne
-je veux quelque chose qui tape fort
+Comprends les formulations naturelles :
 
-Utilise une évaluation qualitative lorsqu'aucune valeur numérique n'est fournie.
+"puissant"
+"très puissant"
+"grosse puissance"
+"beaucoup de puissance"
+"ça doit taper fort"
+"je veux de la puissance"
+"je privilégie la puissance"
+"puissance moyenne"
+"pas besoin de beaucoup de puissance"
+"plutôt faible"
 
-Ne jamais inventer une valeur numérique.
+Lorsqu'aucune mesure objective n'est fournie, utilise un niveau qualitatif.
 
-━━━━━━━━━━━━━━━━━━━━
-6. PRÉCISION
-━━━━━━━━━━━━━━━━━━━━
+Ne fabrique jamais une valeur numérique.
 
-Comprends notamment :
+L'importance dépend de la formulation.
 
-précis
-très précis
-bonne précision
-précision importante
-je privilégie la précision
-je veux quelque chose de précis
+Exemples :
 
-Ne jamais inventer une distance de tir.
+"je veux quelque chose de puissant"
 
-━━━━━━━━━━━━━━━━━━━━
-7. MANIABILITÉ
-━━━━━━━━━━━━━━━━━━━━
+→ importance = 3 ou 4
 
-Comprends notamment :
+"la puissance est le plus important"
 
-maniable
-très maniable
-facile à manier
-facile à utiliser
-compact
-léger
-je privilégie la maniabilité
+→ importance = 5
+
+"la puissance m'importe peu"
+
+→ importance = 1
+
+============================================================
+PRÉCISION
+============================================================
+
+Comprends :
+
+"précis"
+"très précis"
+"bonne précision"
+"je privilégie la précision"
+"la précision est importante"
+"je veux quelque chose de précis"
+
+Ne transforme jamais automatiquement "précis" en distance ou valeur numérique.
+
+Ne crée jamais une distance de tir qui n'a pas été donnée.
+
+============================================================
+MANIABILITÉ
+============================================================
+
+Comprends :
+
+"maniable"
+"très maniable"
+"facile à manier"
+"facile à utiliser"
+"compact"
+"léger"
+"je privilégie la maniabilité"
+"je veux quelque chose de maniable"
 
 Attention :
 
-"léger" et "maniable" sont liés mais ne sont pas exactement synonymes.
+"léger" et "maniable" sont liés mais ne sont pas synonymes parfaits.
 
-Si les deux sont demandés, conserve les deux informations.
+Si le client demande explicitement les deux, conserve les deux préférences.
 
-━━━━━━━━━━━━━━━━━━━━
-8. NIVEAU
-━━━━━━━━━━━━━━━━━━━━
+============================================================
+NIVEAU DU CLIENT
+============================================================
 
-Détecte :
+Détecte le niveau lorsque le client le mentionne.
 
-débutant
-intermédiaire
-expérimenté
-expert
+Catégories :
+
+- débutant
+- intermédiaire
+- expérimenté
+- expert
 
 Exemples :
 
 "je suis débutant"
+"je débute"
 "je commence"
+
 → débutant
 
 "je suis expérimenté"
+
 → expérimenté
 
-Le niveau n'est PAS automatiquement éliminatoire.
+"je suis expert"
 
-Il peut influencer la pertinence de certaines caractéristiques.
+→ expert
 
-━━━━━━━━━━━━━━━━━━━━
-9. PRIORITÉS
-━━━━━━━━━━━━━━━━━━━━
+IMPORTANT :
 
-Le client peut hiérarchiser ses préférences.
+Le niveau du client n'est PAS automatiquement une contrainte éliminatoire.
 
-"Je privilégie la maniabilité"
-→ maniabilité importance 4
+Il sert principalement de contexte permettant de mieux interpréter ses besoins et ses priorités.
 
-"Le plus important pour moi est la précision"
-→ précision importance 5
+Exemple :
 
-"Je veux surtout quelque chose de puissant"
-→ puissance importance 4
+"Je suis débutant et je veux quelque chose de très maniable."
 
-"La maniabilité est plus importante que la puissance"
-→ maniabilité > puissance
+→ niveau = débutant
+→ maniabilité = importance élevée
 
-"Je veux surtout de la précision, mais aussi de la puissance"
-→ précision > puissance
+Ne pas transformer automatiquement "débutant" en :
 
-Utilise cette échelle :
+maniabilité = 5
 
-0 = non mentionné
-1 = faible
-2 = moyenne
-3 = importante
-4 = très importante
-5 = priorité absolue
+si le client ne l'a pas demandé.
 
-Ne donne jamais artificiellement une importance élevée à un critère simplement parce qu'il est généralement important.
+============================================================
+HIÉRARCHIE DES PRÉFÉRENCES
+============================================================
 
-L'importance doit venir de la demande du client.
-
-━━━━━━━━━━━━━━━━━━━━
-10. AUTRES PRÉFÉRENCES
-━━━━━━━━━━━━━━━━━━━━
-
-Tout élément pertinent qui ne correspond pas aux critères principaux doit être conservé.
+Le client peut comparer directement plusieurs critères.
 
 Exemples :
 
-facile à transporter
-polyvalent
-chasse à trou
-chasse à l'agachon
-usage particulier
-préférence personnelle
+"la maniabilité est plus importante que la puissance"
 
-Ne rien inventer.
+→ maniabilité > puissance
 
-━━━━━━━━━━━━━━━━━━━━
-11. INFORMATIONS ABSENTES
-━━━━━━━━━━━━━━━━━━━━
+"je privilégie surtout la précision mais je veux aussi de la puissance"
 
-Si un critère n'est pas mentionné :
+→ précision > puissance
 
-ne lui attribue aucune valeur ;
-ne suppose pas que le client s'en fiche ;
-ne crée aucune préférence ;
-importance = 0.
+"la puissance est essentielle, la maniabilité secondaire"
+
+→ puissance = 5
+→ maniabilité = 2
+
+Lorsque le client donne une hiérarchie explicite, elle doit être respectée.
+
+============================================================
+FORMULATIONS D'INTENSITÉ
+============================================================
+
+Interprète approximativement les formulations suivantes :
+
+"un peu"
+→ importance 1-2
+
+"j'aimerais"
+→ importance 2
+
+"je préfère"
+→ importance 2-3
+
+"je privilégie"
+→ importance 3-4
+
+"important"
+→ importance 3
+
+"très important"
+→ importance 4
+
+"énormément"
+→ importance 5
+
+"essentiel"
+→ importance 5
+
+"le plus important"
+→ importance 5
+
+"priorité absolue"
+→ importance 5
+
+Ces valeurs sont indicatives : le contexte complet de la phrase est prioritaire.
+
+============================================================
+PLUSIEURS CRITÈRES
+============================================================
+
+Une seule phrase peut contenir plusieurs critères.
+
+Exemple :
+
+"Je suis débutant, je veux un roller de 90 cm maximum 250 €, plutôt puissant et surtout très maniable."
+
+Extraire séparément :
+
+niveau = débutant
+
+configuration = roller
+
+longueur = 90
+
+budget maximum = 250
+
+puissance = préférence
+
+maniabilité = priorité élevée
+
+Ne jamais fusionner plusieurs critères différents en une seule information.
+
+============================================================
+LANGAGE FAMILIER ET FAUTES
+============================================================
+
+Le client peut utiliser :
+
+- fautes ;
+- langage familier ;
+- abréviations ;
+- phrases incomplètes ;
+- termes techniques ;
+- formulations approximatives.
+
+Comprends l'intention.
+
+Exemple :
+
+"jsuis débutant jveux un truc qui tape fort mais facile à manier genre 90"
+
+doit être interprété comme :
+
+niveau = débutant
+puissance = importante
+maniabilité = importante
+longueur = environ 90 cm
+
+============================================================
+ABSENCE D'INFORMATION
+============================================================
+
+C'est une règle ABSOLUE.
+
+Si le client ne parle pas d'un critère :
+
+- ne pas inventer de valeur ;
+- ne pas inventer une préférence ;
+- ne pas attribuer une importance artificielle.
+
+Le critère doit rester vide ou à null.
 
 Exemple :
 
@@ -381,96 +631,118 @@ puissance
 précision
 maniabilité
 niveau
-matériaux
+matériau
 sandows
+usage
 
-━━━━━━━━━━━━━━━━━━━━
-12. CONTRADICTIONS
-━━━━━━━━━━━━━━━━━━━━
+============================================================
+CONTRADICTIONS
+============================================================
 
-Si la demande contient une contradiction, ne choisis pas arbitrairement.
+Si le client se contredit :
+
+NE choisis PAS arbitrairement une version.
 
 Exemple :
 
 "Je veux absolument un roller mais surtout pas un roller."
 
-Conserve l'information contradictoire et signale-la dans contradictions.
+Conserve les informations contradictoires et ajoute une entrée dans contradictions.
 
-━━━━━━━━━━━━━━━━━━━━
-13. LANGAGE NATUREL
-━━━━━━━━━━━━━━━━━━━━
+============================================================
+AMBIGUÏTÉS
+============================================================
 
-Le client peut utiliser :
+Si une formulation est ambiguë :
 
-fautes d'orthographe
-abréviations
-langage familier
-phrases incomplètes
-vocabulaire technique
-synonymes
-formulations approximatives
+- ne transforme pas une supposition en fait ;
+- choisis l'interprétation la plus raisonnable ;
+- indique l'ambiguïté dans ambiguities si nécessaire.
 
-Comprends l'intention plutôt que de rechercher uniquement des mots exacts.
+Ne jamais inventer une information pour remplir un champ.
 
-Exemple :
+============================================================
+AUTRES PRÉFÉRENCES
+============================================================
 
-"jsuis débutant, jveux un truc qui tape fort mais facile à manier, genre 90"
+Tout élément pertinent qui ne rentre pas dans les critères principaux doit être conservé dans autres_preferences.
 
-doit devenir :
+Exemples :
 
-niveau = débutant
-puissance = importante
-maniabilité = importante
-longueur = environ 90 cm
+"facile à transporter"
+"polyvalent"
+"je chasse principalement à trou"
+"je veux quelque chose de polyvalent"
+"je plonge principalement en Méditerranée"
 
-━━━━━━━━━━━━━━━━━━━━
-14. UNITÉS
-━━━━━━━━━━━━━━━━━━━━
+Ne pas inventer de préférence.
 
-Normalise les longueurs en centimètres.
+============================================================
+RÈGLE DE PRIORITÉ
+============================================================
 
-Normalise les budgets en euros lorsque la devise est identifiable.
+Lorsque plusieurs informations sont présentes, respecte cet ordre logique :
 
-Ne convertis pas arbitrairement une devise inconnue.
+1. contraintes strictes explicites ;
+2. exclusions explicites ;
+3. budget maximum ;
+4. configuration obligatoire ;
+5. autres contraintes strictes ;
+6. préférences souples ;
+7. priorités explicites ;
+8. contexte utilisateur ;
+9. informations secondaires.
 
-━━━━━━━━━━━━━━━━━━━━
-15. RÈGLE ABSOLUE : NE JAMAIS INVENTER
-━━━━━━━━━━━━━━━━━━━━
+Attention :
 
-Ne jamais inventer :
+Cet ordre ne signifie PAS que les préférences souples sont ignorées.
 
-budget
-longueur
-configuration
-puissance
-précision
-maniabilité
-niveau
-préférence
-caractéristique produit
+Il sert à distinguer ce qui élimine de ce qui classe.
 
-Si une information n'est pas présente ou raisonnablement déductible :
-elle reste absente.
+============================================================
+OBJECTIF DE LA SORTIE
+============================================================
 
-━━━━━━━━━━━━━━━━━━━━
-16. OBJECTIF FINAL
-━━━━━━━━━━━━━━━━━━━━
+La sortie doit être une représentation fidèle de la demande du client.
 
-La sortie sera utilisée par un moteur SpearMatch qui effectuera ensuite :
+Elle doit permettre au moteur SpearMatch de répondre à la question :
 
-1. filtres éliminatoires ;
-2. contraintes strictes ;
-3. calcul du score de correspondance ;
-4. pondération selon les priorités ;
-5. classement ;
-6. affichage des cinq meilleurs produits.
+"Parmi les produits disponibles dans le CMS, lesquels correspondent le mieux à cette demande ?"
 
-Tu ne réalises aucune de ces étapes.
+L'IA fournit les données.
 
-Tu fournis uniquement les critères structurés.
+Le moteur de recommandation prendra ensuite la décision.
+
+NE choisis jamais toi-même les cinq meilleurs produits.
+
+NE donne jamais de produit dans la réponse.
+
+NE donne jamais de score final.
+
+NE donne jamais de classement.
+
+============================================================
+RÈGLE FINALE
+============================================================
+
+FIDÉLITÉ > SUPPOSITION.
+
+Si tu sais : indique-le.
+
+Si le client le préfère : indique-le comme préférence.
+
+Si le client l'exige : indique-le comme strict.
+
+Si le client l'interdit : indique-le comme exclusion.
+
+Si le client ne le dit pas : ne l'invente pas.
 `,
 
-      input: query,
+      input: userQuery,
+
+      // ==========================================================
+      // SORTIE JSON STRICTEMENT STRUCTURÉE
+      // ==========================================================
 
       text: {
         format: {
@@ -499,6 +771,9 @@ Tu fournis uniquement les critères structurés.
                   },
                   strict: {
                     type: "boolean"
+                  },
+                  importance: {
+                    type: "number"
                   }
                 },
                 required: [
@@ -506,7 +781,8 @@ Tu fournis uniquement les critères structurés.
                   "maximum",
                   "target",
                   "currency",
-                  "strict"
+                  "strict",
+                  "importance"
                 ],
                 additionalProperties: false
               },
@@ -651,6 +927,13 @@ Tu fournis uniquement les critères structurés.
                 items: {
                   type: "string"
                 }
+              },
+
+              ambiguities: {
+                type: "array",
+                items: {
+                  type: "string"
+                }
               }
             },
 
@@ -663,7 +946,8 @@ Tu fournis uniquement les critères structurés.
               "maniabilite",
               "niveau",
               "autres_preferences",
-              "contradictions"
+              "contradictions",
+              "ambiguities"
             ],
 
             additionalProperties: false
@@ -672,16 +956,75 @@ Tu fournis uniquement les critères structurés.
       }
     });
 
+    // ============================================================
+    // RÉCUPÉRATION DU JSON
+    // ============================================================
+
     const result = JSON.parse(response.output_text);
+
+    // ============================================================
+    // PETITE NORMALISATION DE SÉCURITÉ
+    // ============================================================
+
+    // On s'assure que les niveaux d'importance restent entre 0 et 5.
+    const clampImportance = (value) => {
+      if (typeof value !== "number" || Number.isNaN(value)) {
+        return 0;
+      }
+
+      return Math.max(0, Math.min(5, value));
+    };
+
+    if (result.budget) {
+      result.budget.importance = clampImportance(
+        result.budget.importance
+      );
+    }
+
+    if (result.configuration) {
+      result.configuration.importance = clampImportance(
+        result.configuration.importance
+      );
+    }
+
+    if (result.longueur) {
+      result.longueur.importance = clampImportance(
+        result.longueur.importance
+      );
+    }
+
+    if (result.puissance) {
+      result.puissance.importance = clampImportance(
+        result.puissance.importance
+      );
+    }
+
+    if (result.precision) {
+      result.precision.importance = clampImportance(
+        result.precision.importance
+      );
+    }
+
+    if (result.maniabilite) {
+      result.maniabilite.importance = clampImportance(
+        result.maniabilite.importance
+      );
+    }
+
+    if (result.niveau) {
+      result.niveau.importance = clampImportance(
+        result.niveau.importance
+      );
+    }
 
     return res.status(200).json(result);
 
   } catch (error) {
-    console.error(error);
+    console.error("SpearMatch API error:", error);
 
     return res.status(500).json({
       error: "Internal server error",
-      details: error.message
+      details: error.message,
     });
   }
 }
