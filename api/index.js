@@ -1017,7 +1017,40 @@ Si le client ne le dit pas : ne l'invente pas.
       );
     }
 
-    return res.status(200).json(result);
+    const WEBFLOW_COLLECTION_ID = "6a92ded472714f0a5fb52611";
+const webflowToken = process.env.WEBFLOW_API_TOKEN;
+
+if (!webflowToken) {
+  throw new Error("WEBFLOW_API_TOKEN is missing");
+}
+
+const webflowResponse = await fetch(
+  `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION_ID}/items`,
+  {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${webflowToken}`,
+      Accept: "application/json"
+    }
+  }
+);
+
+if (!webflowResponse.ok) {
+  const errorText = await webflowResponse.text();
+
+  throw new Error(
+    `Webflow API ${webflowResponse.status}: ${errorText}`
+  );
+}
+
+const webflowData = await webflowResponse.json();
+const products = webflowData.items || [];
+
+return res.status(200).json({
+  criteria: result,
+  productsCount: products.length,
+  products
+});
 
   } catch (error) {
     console.error("SpearMatch API error:", error);
