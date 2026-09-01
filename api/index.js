@@ -1045,19 +1045,917 @@ if (!webflowResponse.ok) {
 
 const webflowData = await webflowResponse.json();
 const products = webflowData.items || [];
+// ============================================================
+// SPEARMATCH — MATCHING ENGINE
+// ============================================================
+
+function normalizeText(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function toNumber(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  const cleaned = String(value)
+    .replace(/\s/g, "")
+    .replace(",", ".")
+    .replace(/[^\d.-]/g, "");
+
+  if (!cleaned) return null;
+
+  const number = Number(cleaned);
+
+  return Number.isFinite(number) ? number : null;
+}
+
+function clamp(value, min = 0, max = 100) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function getField(fieldData, names) {
+  for (const name of names) {
+    if (
+      fieldData[name] !== undefined &&
+      fieldData[name] !== null &&
+      fieldData[name] !== ""
+    ) {
+      return fieldData[name];
+    }
+  }
+
+  return null;
+}
+
+function levelToScore(level) {
+  const value = normalizeText(level);
+
+  if (!value) return null;
+
+  if (
+    value.includes("tres faible") ||
+    value.includes("tres leger") ||
+    value.includes("tres legere")
+  ) {
+    return 1;
+  }
+
+  if (
+    value === "faible" ||
+    value.includes("faible") ||
+    value.includes("legere") ||
+    value.includes("leger")
+  ) {
+    return 2;
+  }
+
+  if (
+    value.includes("moyenne") ||
+    value.includes("moyen") ||
+    value.includes("moderee") ||
+    value.includes("modere")
+  ) {
+    return 3;
+  }
+
+  if (
+    value.includes("tres elevee") ||
+    value.includes("tres eleve") ||
+    value.includes("exceptionnelle") ||
+    value.includes("maximale")
+  ) {
+    return 5;
+  }
+
+  if (
+    value.includes("elevee") ||
+    value.includes("eleve") ||
+    value.includes("forte") ||
+    value.includes("fort")
+  ) {
+    return 4;
+  }
+
+  return null;
+}
+
+function normalizeConfiguration(value) {
+  const config = normalizeText(value);
+
+  if (!config) return "";
+
+  if (config.includes("invert")) {
+    return "invert roller";
+  }
+
+  if (
+    config.includes("roller hybride") ||
+    config.includes("hybrid roller")
+  ) {
+    return "roller hybride";
+  }
+
+  if (config.includes("roller")) {
+    return "roller";
+  }
+
+  if (
+    config.includes("pneumatique") ||
+    config.includes("pneumatic")
+  ) {
+    return "pneumatique";
+  }
+
+  if (
+    config.includes("triple") ||
+    config.includes("3 sandow")
+  ) {
+    return "triple";
+  }
+
+  if (
+    config.includes("double") ||
+    config.includes("2 sandow")
+  ) {
+    return "double";
+  }
+
+  if (
+    config.includes("classique") ||
+    config.includes("simple") ||
+    config.includes("ferme") ||
+    config.includes("ouvert")
+  ) {
+    return "classique";
+  }
+
+  return config;
+}
+function normalizeWebflowProduct(item) {
+  const f = item.fieldData || {};
+
+  return {
+    id: item.id || null,
+
+    name: getField(f, [
+      "name",
+      "nom",
+      "nom-du-produit",
+      "produit"
+    ]),
+
+    slug: getField(f, [
+      "slug"
+    ]),
+
+    price: toNumber(
+      getField(f, [
+        "prix",
+        "price"
+      ])
+    ),
+
+    length: toNumber(
+      getField(f, [
+        "longueur",
+        "longueur-tube",
+        "longueur-cm"
+      ])
+    ),
+
+    power: toNumber(
+      getField(f, [
+        "puissance"
+      ])
+    ),
+
+    precision: toNumber(
+      getField(f, [
+        "précision",
+        "precision"
+      ])
+    ),
+
+    handling: toNumber(
+      getField(f, [
+        "maniabilité",
+        "maniabilite"
+      ])
+    ),
+
+    configuration: normalizeConfiguration(
+      getField(f, [
+        "type-de-configuration",
+        "configuration",
+        "config"
+      ])
+    ),
+
+    bands: toNumber(
+      getField(f, [
+        "nombre-de-sandows",
+        "nombre-de-sandow",
+        "sandows"
+      ])
+    ),
+
+    bandDiameter: toNumber(
+      getField(f, [
+        "diamètre-des-sandows",
+        "diametre-des-sandows",
+        "diametre-des-sandow"
+      ])
+    ),
+
+    brand: getField(f, [
+      "marque",
+      "brand"
+    ]),
+
+    material: getField(f, [
+      "matériaux",
+      "materiaux",
+      "material"
+    ]),
+
+    image: getField(f, [
+      "image",
+      "image-url"
+    ]),
+
+    offerLink: getField(f, [
+      "lien-de-loffre",
+      "lien-de-l-offre",
+      "lien-offre",
+      "url"
+    ]),
+
+    raw: item
+  };
+}
+
+function configurationMatches(product, requestedConfiguration) {
+  const wanted = normalizeConfiguration(
+    requestedConfiguration
+  );
+
+  if (!wanted) return false;
+
+  if (product.configuration === wanted) {
+    return true;
+  }
+
+  if (
+    wanted === "double" &&
+    product.bands === 2
+  ) {
+    return true;
+  }
+
+  if (
+    wanted === "triple" &&
+    product.bands === 3
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+// ============================================================
+// FILTRES STRICTS
+// ============================================================
+
+function passesStrictFilters(product, criteria) {
+
+  // ----------------------------
+  // BUDGET
+  // ----------------------------
+
+  if (criteria.budget?.strict) {
+
+    if (
+      criteria.budget.maximum !== null &&
+      criteria.budget.maximum !== undefined
+    ) {
+      if (
+        product.price === null ||
+        product.price > criteria.budget.maximum
+      ) {
+        return false;
+      }
+    }
+
+    if (
+      criteria.budget.minimum !== null &&
+      criteria.budget.minimum !== undefined
+    ) {
+      if (
+        product.price === null ||
+        product.price < criteria.budget.minimum
+      ) {
+        return false;
+      }
+    }
+  }
+
+  // ----------------------------
+  // CONFIGURATION
+  // ----------------------------
+
+  if (criteria.configuration?.strict) {
+
+    const requestedValues =
+      criteria.configuration.values || [];
+
+    const excludedValues =
+      criteria.configuration.excluded || [];
+
+    if (requestedValues.length > 0) {
+
+      const matchesAtLeastOne =
+        requestedValues.some(value =>
+          configurationMatches(product, value)
+        );
+
+      if (!matchesAtLeastOne) {
+        return false;
+      }
+    }
+
+    if (excludedValues.length > 0) {
+
+      const isExcluded =
+        excludedValues.some(value =>
+          configurationMatches(product, value)
+        );
+
+      if (isExcluded) {
+        return false;
+      }
+    }
+  }
+
+  // ----------------------------
+  // LONGUEUR
+  // ----------------------------
+
+  if (criteria.longueur?.strict) {
+
+    if (
+      criteria.longueur.minimum !== null &&
+      criteria.longueur.minimum !== undefined
+    ) {
+      if (
+        product.length === null ||
+        product.length < criteria.longueur.minimum
+      ) {
+        return false;
+      }
+    }
+
+    if (
+      criteria.longueur.maximum !== null &&
+      criteria.longueur.maximum !== undefined
+    ) {
+      if (
+        product.length === null ||
+        product.length > criteria.longueur.maximum
+      ) {
+        return false;
+      }
+    }
+
+    if (
+      criteria.longueur.target !== null &&
+      criteria.longueur.target !== undefined
+    ) {
+      if (
+        product.length === null ||
+        product.length !== criteria.longueur.target
+      ) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+// ============================================================
+// SCORES DES CRITÈRES
+// ============================================================
+
+function scoreNumericPreference(
+  productValue,
+  requestedLevel
+) {
+  if (
+    productValue === null ||
+    productValue === undefined ||
+    requestedLevel === null ||
+    requestedLevel === undefined
+  ) {
+    return null;
+  }
+
+  const target = levelToScore(requestedLevel);
+
+  if (target === null) {
+    return null;
+  }
+
+  const difference =
+    Math.abs(productValue - target);
+
+  return clamp(
+    100 - (difference * 25)
+  );
+}
+
+function scoreLength(product, criteria) {
+
+  if (!criteria.longueur) {
+    return null;
+  }
+
+  if (
+    criteria.longueur.target === null ||
+    criteria.longueur.target === undefined ||
+    product.length === null
+  ) {
+    return null;
+  }
+
+  const target =
+    criteria.longueur.target;
+
+  const difference =
+    Math.abs(product.length - target);
+
+  return clamp(
+    100 - (difference * 5)
+  );
+}
+
+function scoreBudget(product, criteria) {
+
+  if (!criteria.budget) {
+    return null;
+  }
+
+  if (
+    product.price === null ||
+    criteria.budget.target === null ||
+    criteria.budget.target === undefined
+  ) {
+    return null;
+  }
+
+  const target =
+    criteria.budget.target;
+
+  if (target <= 0) {
+    return null;
+  }
+
+  if (product.price <= target) {
+    return 100;
+  }
+
+  const differencePercent =
+    ((product.price - target) / target) * 100;
+
+  return clamp(
+    100 - differencePercent
+  );
+}
+
+function scoreConfiguration(
+  product,
+  criteria
+) {
+
+  if (!criteria.configuration) {
+    return null;
+  }
+
+  const requestedValues =
+    criteria.configuration.values || [];
+
+  if (requestedValues.length === 0) {
+    return null;
+  }
+
+  const matches =
+    requestedValues.some(value =>
+      configurationMatches(product, value)
+    );
+
+  return matches ? 100 : 0;
+}
+
+// ============================================================
+// SCORE FINAL PONDÉRÉ
+// ============================================================
+
+function calculateMatchScore(
+  product,
+  criteria
+) {
+
+  const scores = [];
+  const breakdown = {};
+
+  function addScore(
+    key,
+    score,
+    importance
+  ) {
+
+    if (
+      score === null ||
+      score === undefined ||
+      !Number.isFinite(score) ||
+      !Number.isFinite(importance) ||
+      importance <= 0
+    ) {
+      return;
+    }
+
+    scores.push({
+      score: clamp(score),
+      importance
+    });
+
+    breakdown[key] =
+      Math.round(
+        clamp(score) * 10
+      ) / 10;
+  }
+
+  // BUDGET
+  if (
+    criteria.budget?.importance > 0 &&
+    !criteria.budget.strict
+  ) {
+
+    addScore(
+      "budget",
+      scoreBudget(product, criteria),
+      criteria.budget.importance
+    );
+  }
+
+  // CONFIGURATION
+  if (
+    criteria.configuration?.importance > 0 &&
+    !criteria.configuration.strict
+  ) {
+
+    addScore(
+      "configuration",
+      scoreConfiguration(
+        product,
+        criteria
+      ),
+      criteria.configuration.importance
+    );
+  }
+
+  // LONGUEUR
+  if (
+    criteria.longueur?.importance > 0
+  ) {
+
+    addScore(
+      "longueur",
+      scoreLength(
+        product,
+        criteria
+      ),
+      criteria.longueur.importance
+    );
+  }
+
+  // PUISSANCE
+  if (
+    criteria.puissance?.importance > 0
+  ) {
+
+    addScore(
+      "puissance",
+      scoreNumericPreference(
+        product.power,
+        criteria.puissance.level
+      ),
+      criteria.puissance.importance
+    );
+  }
+
+  // PRÉCISION
+  if (
+    criteria.precision?.importance > 0
+  ) {
+
+    addScore(
+      "precision",
+      scoreNumericPreference(
+        product.precision,
+        criteria.precision.level
+      ),
+      criteria.precision.importance
+    );
+  }
+
+  // MANIABILITÉ
+  if (
+    criteria.maniabilite?.importance > 0
+  ) {
+
+    addScore(
+      "maniabilite",
+      scoreNumericPreference(
+        product.handling,
+        criteria.maniabilite.level
+      ),
+      criteria.maniabilite.importance
+    );
+  }
+
+  if (scores.length === 0) {
+
+    return {
+      score: 100,
+      breakdown
+    };
+  }
+
+  let weightedTotal = 0;
+  let totalImportance = 0;
+
+  for (const item of scores) {
+
+    weightedTotal +=
+      item.score * item.importance;
+
+    totalImportance +=
+      item.importance;
+  }
+
+  const finalScore =
+    totalImportance > 0
+      ? weightedTotal / totalImportance
+      : 100;
+
+  return {
+    score:
+      Math.round(
+        clamp(finalScore) * 10
+      ) / 10,
+
+    breakdown
+  };
+}
+// ============================================================
+// EXPLICATIONS DU MATCH
+// ============================================================
+
+function buildReasons(
+  product,
+  criteria,
+  breakdown
+) {
+
+  const reasons = [];
+
+  if (
+    criteria.budget?.importance > 0 &&
+    product.price !== null &&
+    criteria.budget.target !== null &&
+    criteria.budget.target !== undefined &&
+    product.price <= criteria.budget.target
+  ) {
+
+    reasons.push(
+      `Budget respecté (${product.price} €)`
+    );
+  }
+
+  if (
+    criteria.configuration?.importance > 0 &&
+    criteria.configuration.values?.length > 0 &&
+    criteria.configuration.values.some(value =>
+      configurationMatches(product, value)
+    )
+  ) {
+
+    reasons.push(
+      `Configuration ${product.configuration} conforme`
+    );
+  }
+
+  if (
+    breakdown.longueur !== undefined &&
+    criteria.longueur?.target !== null &&
+    criteria.longueur?.target !== undefined &&
+    product.length !== null
+  ) {
+
+    const difference =
+      Math.abs(
+        product.length -
+        criteria.longueur.target
+      );
+
+    if (difference === 0) {
+
+      reasons.push(
+        `Longueur exactement de ${product.length} cm`
+      );
+
+    } else {
+
+      reasons.push(
+        `Longueur proche de la cible (${product.length} cm)`
+      );
+    }
+  }
+
+  if (
+    breakdown.puissance !== undefined &&
+    criteria.puissance?.level
+  ) {
+
+    reasons.push(
+      "Puissance adaptée au niveau demandé"
+    );
+  }
+
+  if (
+    breakdown.precision !== undefined &&
+    criteria.precision?.level
+  ) {
+
+    reasons.push(
+      "Précision adaptée au niveau demandé"
+    );
+  }
+
+  if (
+    breakdown.maniabilite !== undefined &&
+    criteria.maniabilite?.level
+  ) {
+
+    reasons.push(
+      "Maniabilité adaptée au niveau demandé"
+    );
+  }
+
+  return reasons.slice(0, 4);
+}
+
+// ============================================================
+// MATCHING COMPLET
+// ============================================================
+
+function matchProducts(
+  products,
+  criteria
+) {
+
+  const normalizedProducts =
+    products.map(
+      normalizeWebflowProduct
+    );
+
+  // 1️⃣ FILTRES STRICTS
+  const eligibleProducts =
+    normalizedProducts.filter(
+      product =>
+        passesStrictFilters(
+          product,
+          criteria
+        )
+    );
+
+  // 2️⃣ CALCUL DES SCORES
+  const scoredProducts =
+    eligibleProducts.map(
+      product => {
+
+        const result =
+          calculateMatchScore(
+            product,
+            criteria
+          );
+
+        return {
+          product,
+          score: result.score,
+          breakdown: result.breakdown,
+
+          reasons: buildReasons(
+            product,
+            criteria,
+            result.breakdown
+          )
+        };
+      }
+    );
+
+  // 3️⃣ CLASSEMENT
+  scoredProducts.sort(
+    (a, b) => {
+
+      // Score principal
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+
+      // Départage par longueur
+      const target =
+        criteria.longueur?.target;
+
+      if (
+        target !== null &&
+        target !== undefined &&
+        a.product.length !== null &&
+        b.product.length !== null
+      ) {
+
+        const aDistance =
+          Math.abs(
+            a.product.length - target
+          );
+
+        const bDistance =
+          Math.abs(
+            b.product.length - target
+          );
+
+        if (aDistance !== bDistance) {
+          return aDistance - bDistance;
+        }
+      }
+
+      // Dernier départage : prix
+      if (
+        a.product.price !== null &&
+        b.product.price !== null
+      ) {
+        return (
+          a.product.price -
+          b.product.price
+        );
+      }
+
+      return 0;
+    }
+  );
+
+  // 4️⃣ TOP 5
+  return {
+    totalProducts:
+      normalizedProducts.length,
+
+    eligibleCount:
+      eligibleProducts.length,
+
+    results:
+      scoredProducts.slice(0, 5)
+  };
+}
+
+const matching =
+  matchProducts(
+    products,
+    result
+  );
+
+// ============================================================
+// RÉPONSE FINALE
+// ============================================================
 
 return res.status(200).json({
   criteria: result,
   productsCount: products.length,
-  products
+  products,
+  matching
 });
+} catch (error) {
+  console.error("SpearMatch API error:", error);
 
-  } catch (error) {
-    console.error("SpearMatch API error:", error);
-
-    return res.status(500).json({
-      error: "Internal server error",
-      details: error.message,
-    });
-  }
+  return res.status(500).json({
+    error: "Internal server error",
+    details: error.message,
+  });
 }
